@@ -1,0 +1,828 @@
+#include "USART_Queue.h"
+#include "stm32f4xx.h"
+#include "stm32f4xx_conf.h"
+//实时系统库
+//#include "FreeRTOS.h"
+//#include "task.h"
+//#include "queue.h"
+//淦哦...我怀疑一晚上都是这个队列的问题
+//我打算字节写个queue的库
+
+//自己写的库
+#include "USART1_.h"
+#include "M_USART2.h"
+#include "M_Queue.h"
+
+M_Queue_Handle* UQ_Queue;
+
+void Init_UQ(void)
+{
+	UQ_Queue = M_Queue_Create(200);//200byte的缓冲区
+	U_SendWords("UQ初始化完成\r\n");
+}
+extern uint8_t USART_Byte;
+extern uint8_t USART_signal;
+//监听USART2的线程
+void Task_UQ_Listen(void* pvParameters)
+{
+	while(1)
+	{
+		if(USART_signal != 0)
+		{
+			M_Queue_In(UQ_Queue,USART_Byte);
+			USART_signal = 0;
+		}
+	}
+}
+void Task_UQ_Speak(void* pvParameters)
+{
+	char single_word = 0;
+	uint8_t received = 0;
+	while(1)
+	{
+		single_word = M_Queue_Out(UQ_Queue,&received);
+		if(received!=0)
+		{
+			C_USART1_SendByte(single_word);
+		}
+	}
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#include "M_Queue.h"
+#include "stm32f4xx.h"
+#include "stm32f4xx_conf.h"
+//需要操作系统的数据分配
+#include "FreeRTOS.h"
+#include "task.h"
+//自己写的库
+#include "M_USART2.h"
+#include "USART1_.h"
+
+/*
+ *	typedef struct M_Queue_t
+ *	{
+ *		void* item;
+ *		struct M_Queue_t* front;
+ *		struct M_Queue_t* next;
+ *	}M_Queue_t;
+ *	
+ *	typedef struct M_Queue_Handle
+ *	{
+ *		M_Queue_t* head;	//用于出队
+ *		M_Queue_t* button;	//用于入队
+ *		M_Queue_t* queue;
+ *		uint16_t length;
+ *	}M_Queue_Handle;
+ */
+/**@brief  创建一个队列并返回句柄
+  *@param  Queue_size 	队列大小
+  *@retval 队列句柄  
+  */
+M_Queue_Handle* M_Queue_Create(uint16_t Queue_size)
+{
+	//创建句柄
+	M_Queue_Handle* Queue_Handle = (M_Queue_Handle*)pvPortMalloc(sizeof(M_Queue_Handle));
+	//创建相关队列内容
+	Queue_Handle->queue = (M_Queue_t*)pvPortMalloc(sizeof(M_Queue_t)*Queue_size);
+	//形成循环链表
+		//处理表头
+	Queue_Handle->queue[0].next = &(Queue_Handle->queue[1]);
+	Queue_Handle->queue[0].front = &(Queue_Handle->queue[Queue_size-1]);
+	Queue_Handle->head = &(Queue_Handle->queue[0]);
+		//处理中间部分
+	for(int i=1;i<Queue_size-1;i++)
+	{
+		Queue_Handle->queue[i].front = &(Queue_Handle->queue[i-1]);
+		Queue_Handle->queue[i].next = &(Queue_Handle->queue[i+1]);
+	}
+		//处理表尾
+	Queue_Handle->queue[Queue_size-1].next = &(Queue_Handle->queue[0]);
+	Queue_Handle->queue[Queue_size-1].front = &(Queue_Handle->queue[Queue_size-2]);
+	Queue_Handle->button = &(Queue_Handle->queue[0]);
+	//给item赋值
+	for(int i=0;i<Queue_size-1;i++)
+	{
+		Queue_Handle->queue[i].item = 0;
+		Queue_Handle->queue[i].IS_Full = 0;
+	}
+	//确定数量
+	Queue_Handle->length = Queue_size;
+	//返回句柄
+	return Queue_Handle;
+}
+/** ->入队
+  */
+uint8_t M_Queue_In(M_Queue_Handle* Queue_Handle,uint8_t item)
+{
+	//队列已满 入队失败
+	if(Queue_Handle->head == Queue_Handle->button && Queue_Handle->head->IS_Full==1)
+	{
+		return 0;
+	}
+	//从队尾入队
+	Queue_Handle->button->item = item;
+	Queue_Handle->button->IS_Full = 1;
+	//队尾向上移动
+	Queue_Handle->button = Queue_Handle->button->front;
+	return 1;
+}
+/** ->出队
+  */
+uint8_t M_Queue_Out(M_Queue_Handle* Queue_Handle,uint8_t* TRUE)
+{
+	//队列空 出队失败
+	if(Queue_Handle->head == Queue_Handle->button && Queue_Handle->head->IS_Full==0)
+	{
+		if(TRUE!=NULL)
+		{
+			*TRUE = 0;
+		}
+		return 0;
+	}
+	//从队头出队
+	uint8_t retval = Queue_Handle->head->item;
+	Queue_Handle->head->IS_Full = 0;
+	if(TRUE!=NULL)
+	{
+//		U1_SendWords("检测到出队\r\n");
+		*TRUE = 1;
+	}
+	//队头同向移动
+	Queue_Handle->head = Queue_Handle->head->front;
+	return retval;
+}
+/** ->释放队列
+  */
+void M_Queue_Free(M_Queue_Handle* Queue_ToDel)
+{
+	vPortFree(Queue_ToDel->queue);
+	vPortFree(Queue_ToDel);
+}
+void M_Queue_Init(void)
+{
+	U1_SendWords("这里是测试队列初始化\r\n");
+}
+void M_Queue_Test(void)
+{	
+	M_Queue_Handle* Queue = M_Queue_Create(5);
+	for(int i=0;i<5;i++)
+	{
+		//入队
+		if(M_Queue_In(Queue,('a'+i))==0)
+		{
+			U1_SendWords("入队失败\r\n");
+		}
+	}
+//	U1_SendWords("出a?->");
+//	C_USART1_SendByte(M_Queue_Out(Queue,NULL));
+	//尝试入队第四个
+	if(M_Queue_In(Queue,'d')==0)
+	{
+		U1_SendWords("第四个入队失败\r\n");
+	}
+	else
+	{
+		U1_SendWords("入队成功\r\n");
+	}
+	//出队
+	for(int i=0;i<5;i++)
+	{
+		C_USART1_SendByte(M_Queue_Out(Queue,NULL));
+	}
+	//尝试出队第四个
+	uint8_t signal = 1;
+	M_Queue_Out(Queue,&signal);
+	if(signal==0)
+	{
+		U1_SendWords("第四个出队失败\r\n");
+	}
+	M_Queue_Out(Queue,&signal);
+	if(signal==0)
+	{
+		U1_SendWords("正常吗？\r\n");
+	}
+	M_Queue_Free(Queue);
+	U1_SendWords("测试完成");
+	
+	
+}
+
+
+
+
+
+
+
+
+
+
+#include "M_USART2.h"
+#include "stm32f4xx.h"
+#include "stm32f4xx_conf.h"
+/*
+ *	PA2->TX	PA3->RX
+ */
+/*
+ *	写了一半感觉不太需要DMA了...F4的9600波特率已经可以接收字符串了....
+ *	内核版本/频率不一样 性能果然不一样....
+ */
+uint8_t USART_Byte = 0;
+uint8_t USART_signal = 0;
+uint8_t USART_ISWords = 0;
+uint8_t USART_words[240];
+uint8_t IDLE_signal = 0;	//空闲量 不用于命令字
+//你的意思是 下面两个信号量都是用在命令字上面的？
+uint8_t command_signal = 0;//命令字检测用
+uint8_t command_default = 0;
+/**@brief  USART2初始化
+  *@param
+  */
+void My_USART2_Init(uint8_t IS_Words)
+{
+	//引脚初始化
+	RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOA,ENABLE);
+	GPIO_PinAFConfig(GPIOA,GPIO_PinSource2,GPIO_AF_USART2);
+	GPIO_PinAFConfig(GPIOA,GPIO_PinSource3,GPIO_AF_USART2);
+	GPIO_InitTypeDef GPIO_InitStruct;
+	GPIO_InitStruct.GPIO_Mode = GPIO_Mode_AF;
+	GPIO_InitStruct.GPIO_OType = GPIO_OType_PP;
+	GPIO_InitStruct.GPIO_Pin = GPIO_Pin_2|GPIO_Pin_3;
+	GPIO_InitStruct.GPIO_PuPd = GPIO_PuPd_UP;
+	GPIO_InitStruct.GPIO_Speed = GPIO_Speed_50MHz;
+	GPIO_Init(GPIOA,&GPIO_InitStruct);
+	//串口初始化
+	RCC_APB1PeriphClockCmd(RCC_APB1Periph_USART2,ENABLE);
+	USART_InitTypeDef USART_InitStruct;
+	USART_InitStruct.USART_BaudRate = 4800;					//波特率
+	USART_InitStruct.USART_HardwareFlowControl = USART_HardwareFlowControl_None;	//硬件流控 一般不用
+	USART_InitStruct.USART_Mode = USART_Mode_Rx|USART_Mode_Tx;	//模式
+	USART_InitStruct.USART_Parity = USART_Parity_No;			//校验位
+	USART_InitStruct.USART_StopBits = USART_StopBits_1;			//数据之间的停止位
+	USART_InitStruct.USART_WordLength = USART_WordLength_8b;	//数据长度
+	USART_Init(USART2,&USART_InitStruct);
+	//中断初始化
+	NVIC_PriorityGroupConfig(NVIC_PriorityGroup_4);			//四位全用于抢占优先级
+	NVIC_InitTypeDef NVIC_InitStruct;
+	NVIC_InitStruct.NVIC_IRQChannel = USART2_IRQn;
+	NVIC_InitStruct.NVIC_IRQChannelCmd = ENABLE;
+	NVIC_InitStruct.NVIC_IRQChannelPreemptionPriority = 6;	//抢占优先级
+	NVIC_InitStruct.NVIC_IRQChannelSubPriority = 0;			
+	NVIC_Init(&NVIC_InitStruct);
+	//常规模式/DMA模式
+	USART_ITConfig(USART2,USART_IT_RXNE,ENABLE);
+	if(IS_Words!=0)
+	{
+		USART_ISWords = 1;
+		USART_ITConfig(USART2,USART_IT_IDLE,ENABLE);
+	}
+	
+	//启动串口
+	USART_Cmd(USART2,ENABLE);
+	U_SendWords("初始化完成\r\n");
+}
+/** ->发送一个字节
+  */
+void My_USART2_SendByte(uint8_t Byte)
+{
+	while(USART_GetFlagStatus(USART2,USART_FLAG_TXE)!=SET);
+	USART_SendData(USART2,Byte);
+}
+/** ->发送字符串
+  */
+void U_SendWords(const char* words)
+{
+	uint16_t index = 0;
+	while(words[index]!='\0')
+	{
+		My_USART2_SendByte(words[index++]);
+	}
+}
+/** ->接收字节
+  */
+uint8_t My_USART2_ReceiveByte(void)
+{
+	if(USART_signal==0)
+	{
+		return 0;
+	}
+	USART_signal = 0;
+	return USART_Byte;
+}
+/** ->获取字符串
+  */
+uint8_t* U_GetWordsAddr(void)
+{
+	return USART_words;
+}
+void USART2_IRQHandler(void)
+{
+	static uint8_t index = 0;
+	if(USART_GetITStatus(USART2,USART_IT_RXNE)==SET)
+	{
+		USART_Byte = USART_ReceiveData(USART2);
+		USART_signal = 1;
+		if(USART_ISWords!=0)//这个字符串获取好像很占性能 但是我想不出其他算法了...
+		{
+			USART_words[index++] = USART_Byte;
+		}
+		USART_ClearITPendingBit(USART2,USART_IT_RXNE);
+	}
+	if(USART_GetITStatus(USART2,USART_IT_IDLE)==SET)
+	{
+		USART_words[index] = '\0';
+		index = 0;
+		command_signal = 1;
+		command_default = 1;
+		IDLE_signal = 1;
+		USART2->SR;USART2->DR;//清除IDLE标志位
+	}
+}
+/** ->命令字检测
+  *	->示例:
+  *		if(*U_GetCommandAccess()==0)
+  *		{
+  *			continue;
+  *		}
+  *		if(Command("命令字"))
+  *		{function();}
+  */
+uint8_t Command(char* command)
+{
+	//避免指令未读取完就开始检测
+	if(command_signal==0)
+	{
+		return 0;
+	}
+	//按照形参的长度检测
+	uint8_t length = 0;
+	while(command[length]!='\0')
+	{
+		if(command[length]!=USART_words[length])
+		{
+			command_default = 0;
+			return 0;
+		}
+		length++;
+	}
+	//避免多次检测成功
+	USART_words[length-1] = ' ';
+	command_signal = 0;
+	command_default = 0;
+	return 1;
+}
+uint8_t* U_GetCommandAccess(void)
+{
+	return &command_default;
+}
+/** ->发送数字
+  */
+void U_SendNum(uint32_t num)
+{
+	if(num==0)
+	{
+		U_SendWords("0");
+		return;
+	}
+	uint32_t num_length = 1;
+	for(;num_length<=num;num_length*=10);
+	for(num_length/=10;num_length>0;num_length/=10)
+	{
+		My_USART2_SendByte('0'+(num/num_length));
+		num -= num_length*(num/num_length);
+	}
+}
+/** ->发送十六进制
+  */
+uint8_t BinaryToHex(uint8_t binary)
+{
+	if(binary<10)
+	{
+		return ('0'+binary);
+	}
+	else 
+	{
+		return ('A'+binary-10);
+	}
+}
+void U_SendHex(uint32_t hex,int hex_length)
+{
+	U_SendWords("0x");
+	uint8_t binary_hex = 0x00;
+	for(hex_length--;hex_length>=0;hex_length--)
+	{
+		binary_hex = (hex>>(4*hex_length))&0xF;
+		My_USART2_SendByte(BinaryToHex(binary_hex));
+	}
+	U_SendWords("\r\n");
+}
+/** ->发送二进制
+  */
+void U_SendBinary(uint32_t binary,uint8_t binary_length)
+{
+	while(binary_length>0)
+	{
+		binary_length--;
+		if( ((binary>>binary_length)&0x01) == 0 )
+		{
+			My_USART2_SendByte('0');
+		}
+		else 
+		{
+			My_USART2_SendByte('1');
+		}
+		if(binary_length%4==0)
+		{
+			My_USART2_SendByte(' ');
+		}
+	}
+	U_SendWords("\r\n");
+}
+
+
+
+
+#include "Shadow.h"
+#include "Func.h"
+#include "stm32f4xx.h"
+#include "stm32f4xx_conf.h"
+#include "FreeRTOS.h"
+#include "task.h"
+//自己写的扩展库
+#include "M_USART2.h"
+#include "USART1_.h"
+//#include "W25Q16.h"
+//#include "TFT.h"
+#include "USART_Queue.h"
+#include "M_Queue.h"
+
+/*
+ *	相关全局变量
+ */
+
+/*
+ *	线程任务句柄
+ */
+TaskHandle_t TASK_COMMAND_LISTEN_Handler;
+TaskHandle_t TASK_LIGHT_Handler;
+TaskHandle_t TASK_UQ_LISTEN_Handler;
+TaskHandle_t TASK_UQ_SPEAK_Handler;
+/**	->创建任务线程
+ */
+void Init_TaskCreate(void* pvParameters)
+{
+	//初始化函数
+	Init_Light();
+	My_USART2_Init(1);
+	Init_IWDG(2000);
+	C_USART1_Init(1);
+	Init_UQ();
+//	M_Queue_Init();
+	
+	//进入临界区
+	taskENTER_CRITICAL();
+	//创建任务线程
+	xTaskCreate(Task_Command_Listen,"Command_Listen",32,NULL,5,&TASK_COMMAND_LISTEN_Handler);
+	xTaskCreate(Task_Light,"Light",18,NULL,4,&TASK_LIGHT_Handler);
+	xTaskCreate(Task_UQ_Listen,"UQ_Listen",40,NULL,3,&TASK_UQ_LISTEN_Handler);
+	xTaskCreate(Task_UQ_Speak,"UQ_Speak",40,NULL,3,&TASK_UQ_SPEAK_Handler);
+	
+	//退出临界区
+	taskEXIT_CRITICAL();
+	//删除自身函数
+	vTaskDelete(NULL);
+}
+/** ->命令字
+  */
+extern uint8_t USART_words[240];
+int Command_Listen(void)
+{
+	//这里放命令字检测
+	if(Command("STOP"))
+	{
+		vTaskSuspend(TASK_LIGHT_Handler);
+		U_SendWords("任务挂起\r\n");
+	}
+	else if(Command("CON"))
+	{
+		vTaskResume(TASK_LIGHT_Handler);
+		U_SendWords("任务恢复\r\n");
+	}
+	//这里开始写...
+	else if(Command("TEST"))
+	{
+		U_SendWords("这里是测试命令字:\r\n");
+		M_Queue_Test();
+	}
+	
+	//结束
+	else
+	{
+		return 0;
+	}
+	return 1;
+}
+
+
+
+
+#include "Func.h"
+#include "Shadow.h"
+#include "stm32f4xx.h"
+#include "stm32f4xx_conf.h"
+#include "FreeRTOS.h"
+#include "task.h"
+//自己写的库
+#include "M_USART2.h"
+#include "Lib.h"
+//自己写的外设扩展库
+#include "W25Q16.h"
+/*	全局变量		*/
+/*	初始化函数	*/
+//看门狗
+void Init_IWDG(uint16_t Reload)
+{
+	//启用看门狗
+	IWDG_WriteAccessCmd(IWDG_WriteAccess_Enable);
+	IWDG_SetPrescaler(IWDG_Prescaler_32);
+	IWDG_SetReload(Reload);
+	IWDG_Enable();
+	IWDG_ReloadCounter();
+	//看门狗检测
+	if(RCC_GetFlagStatus(RCC_FLAG_IWDGRST)==SET)
+	{
+		RCC_ClearFlag();
+		U_SendWords("警告！触发看门狗复位...\r\n");
+	}
+}
+//点灯
+void Init_Light(void)
+{
+	RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOB,ENABLE);
+	M_GPIO_Init(GPIOB,GPIO_Mode_OUT,GPIO_OType_OD,GPIO_Pin_10,GPIO_PuPd_UP,GPIO_Speed_2MHz);
+}
+/*	线程函数		*/
+//USART空闲检测
+extern uint8_t IDLE_signal;
+extern uint8_t USART_words[240];
+void Task_IDLE(void* pvParameters)
+{
+	while(1)
+	{
+		vTaskDelay(1);
+		if(IDLE_signal!=0)
+		{
+			U_SendWords("\r\n->");
+			U_SendWords((char*)USART_words);
+			IDLE_signal = 0;
+		}
+	}
+}
+//点灯
+void Task_Light(void* pvParameters)
+{
+	while(1)
+	{
+		//看门狗...
+		IWDG_ReloadCounter();
+		GPIO_WriteBit(GPIOB,GPIO_Pin_10,Bit_SET);
+		vTaskDelay(500);
+		GPIO_WriteBit(GPIOB,GPIO_Pin_10,Bit_RESET);
+		vTaskDelay(500);
+	}
+}
+//命令字监听
+extern uint8_t USART_words[240];
+extern uint8_t command_signal;
+void Task_Command_Listen(void* pvParameters)
+{
+	while(1)
+	{
+		vTaskDelay(15);
+		if(command_signal==0)
+		{
+			continue;
+		}
+		//命令字具体监听(在Shadow.c)
+		if(Command_Listen()!=0)
+		{
+			continue;
+		}
+		if(Command("COMMAND"))
+		{
+			U_SendWords("命令字通过，这里是F4.\r\n");
+		}
+		else if(Command("STACK"))
+		{
+			TaskStatus_t* Stack_Status = (TaskStatus_t*)pvPortMalloc(sizeof(TaskStatus_t)*uxTaskGetNumberOfTasks());
+			uxTaskGetSystemState(Stack_Status,uxTaskGetNumberOfTasks(),NULL);
+			U_SendWords("这里是输出,共有");
+			U_SendNum(uxTaskGetNumberOfTasks());
+			U_SendWords("个任务:\r\n");
+			for(int i=0;i<uxTaskGetNumberOfTasks();i++)
+			{
+				U_SendWords(Stack_Status[i].pcTaskName);
+				U_SendWords("\t");
+				U_SendNum(Stack_Status[i].usStackHighWaterMark);
+				U_SendWords("\r\n");
+			}
+			vPortFree(Stack_Status);
+		}
+		else
+		{
+			U_SendWords("命令字检测错误\r\n");
+		}
+		command_signal = 0;
+	}
+}
+
+
+
+
+#include "USART1_.h"
+#include "stm32f4xx.h"
+#include "stm32f4xx_conf.h"
+/*
+ *	打算照着USART2抄一份USART1
+ *	PA9->TX PA10->RX
+ */
+uint8_t USART1_Byte = 0;
+uint8_t USART1_signal = 0;
+uint8_t USART1_ISWords = 0;
+uint8_t USART1_words[240];
+uint8_t IDLE1_signal = 0;	//空闲量 不用于命令字
+
+
+void C_USART1_Init(uint8_t IS_Words)
+{
+	//引脚初始化
+	RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOA,ENABLE);
+	GPIO_PinAFConfig(GPIOA,GPIO_PinSource9,GPIO_AF_USART1);
+	GPIO_PinAFConfig(GPIOA,GPIO_PinSource10,GPIO_AF_USART1);
+	GPIO_InitTypeDef GPIO_InitStruct;
+	
+	GPIO_InitStruct.GPIO_Mode = GPIO_Mode_AF;
+	GPIO_InitStruct.GPIO_OType = GPIO_OType_PP;
+	GPIO_InitStruct.GPIO_Pin = GPIO_Pin_9|GPIO_Pin_10;
+	GPIO_InitStruct.GPIO_PuPd = GPIO_PuPd_UP;
+	GPIO_InitStruct.GPIO_Speed = GPIO_Speed_50MHz;
+	GPIO_Init(GPIOA,&GPIO_InitStruct);
+	//串口初始化
+		//串口初始化
+	RCC_APB2PeriphClockCmd(RCC_APB2Periph_USART1,ENABLE);
+	USART_InitTypeDef USART_InitStruct;
+	USART_InitStruct.USART_BaudRate = 4800;					//波特率
+	USART_InitStruct.USART_HardwareFlowControl = USART_HardwareFlowControl_None;	//硬件流控 一般不用
+	USART_InitStruct.USART_Mode = USART_Mode_Rx|USART_Mode_Tx;	//模式
+	USART_InitStruct.USART_Parity = USART_Parity_No;			//校验位
+	USART_InitStruct.USART_StopBits = USART_StopBits_1;			//数据之间的停止位
+	USART_InitStruct.USART_WordLength = USART_WordLength_8b;	//数据长度
+	USART_Init(USART1,&USART_InitStruct);
+	//中断初始化
+		//中断初始化
+	NVIC_PriorityGroupConfig(NVIC_PriorityGroup_4);			//四位全用于抢占优先级
+	NVIC_InitTypeDef NVIC_InitStruct;
+	NVIC_InitStruct.NVIC_IRQChannel = USART1_IRQn;
+	NVIC_InitStruct.NVIC_IRQChannelCmd = ENABLE;
+	NVIC_InitStruct.NVIC_IRQChannelPreemptionPriority = 7;	//抢占优先级
+	NVIC_InitStruct.NVIC_IRQChannelSubPriority = 0;			
+	NVIC_Init(&NVIC_InitStruct);
+		//常规模式/DMA模式
+	USART_ITConfig(USART1,USART_IT_RXNE,ENABLE);
+	if(IS_Words!=0)
+	{
+		USART1_ISWords = 1;
+		USART_ITConfig(USART1,USART_IT_IDLE,ENABLE);
+	}
+	//启动串口
+	USART_Cmd(USART1,ENABLE);
+	U1_SendWords("USART1初始化完成\r\n");
+	
+}
+void C_USART1_SendByte(uint8_t Byte)
+{
+	while(USART_GetFlagStatus(USART1,USART_FLAG_TXE)!=SET);
+	USART_SendData(USART1,Byte);
+
+}
+void U1_SendWords(const char* words)
+{
+	uint16_t index = 0;
+	while(words[index]!='\0')
+	{
+		C_USART1_SendByte(words[index++]);
+	}
+}
+uint8_t C_USART1_ReceiveByte(void)
+{
+	if(USART1_signal==0)
+	{
+		return 0;
+	}
+	USART1_signal = 0;
+	return USART1_Byte;
+}
+uint8_t* U1_GetWordsAddr(void)
+{
+	return USART1_words;
+}
+void USART1_IRQHandler(void)
+{
+	static uint8_t index = 0;
+	if(USART_GetITStatus(USART1,USART_IT_RXNE)==SET)
+	{
+		USART1_Byte = USART_ReceiveData(USART1);
+		USART1_signal = 1;
+		if(USART1_ISWords!=0)//这个字符串获取好像很占性能 但是我想不出其他算法了...
+		{
+			USART1_words[index++] = USART1_Byte;
+		}
+		USART_ClearITPendingBit(USART1,USART_IT_RXNE);
+	}
+	if(USART_GetITStatus(USART1,USART_IT_IDLE)==SET)
+	{
+		USART1_words[index] = '\0';
+		index = 0;
+		IDLE1_signal = 1;
+		USART1->SR;USART1->DR;//清除IDLE标志位
+	}
+}
+void U1_SendNum(uint32_t num)
+{
+	if(num==0)
+	{
+		U1_SendWords("0");
+		return;
+	}
+	uint32_t num_length = 1;
+	for(;num_length<=num;num_length*=10);
+	for(num_length/=10;num_length>0;num_length/=10)
+	{
+		C_USART1_SendByte('0'+(num/num_length));
+		num -= num_length*(num/num_length);
+	}
+}
+uint8_t BinaryToHex1(uint8_t binary)
+{
+	if(binary<10)
+	{
+		return ('0'+binary);
+	}
+	else 
+	{
+		return ('A'+binary-10);
+	}
+}
+void U1_SendHex(uint32_t hex,int hex_length)
+{
+	U1_SendWords("0x");
+	uint8_t binary_hex = 0x00;
+	for(hex_length--;hex_length>=0;hex_length--)
+	{
+		binary_hex = (hex>>(4*hex_length))&0xF;
+		C_USART1_SendByte(BinaryToHex1(binary_hex));
+	}
+	U1_SendWords("\r\n");
+
+}
+void U1_SendBinary(uint32_t binary,uint8_t binary_length)
+{
+	while(binary_length>0)
+	{
+		binary_length--;
+		if( ((binary>>binary_length)&0x01) == 0 )
+		{
+			C_USART1_SendByte('0');
+		}
+		else 
+		{
+			C_USART1_SendByte('1');
+		}
+		if(binary_length%4==0)
+		{
+			C_USART1_SendByte(' ');
+		}
+	}
+	U1_SendWords("\r\n");
+
+}
+
+
+
+
+受卫大师队列作业的启发 
+采用队列实现同时读取并输出串口数据的操作
+以后可用于串口向SD卡写入数据、SD卡向TFT屏幕输出数据等方面...
+之类的事情

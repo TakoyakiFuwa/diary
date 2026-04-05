@@ -1,0 +1,36 @@
+74HC138数码管位选
+a->7
+b->6
+c->5
+d->4
+e->3
+f->2
+g->1
+h->0
+
+数码管段选
+PB15->1
+PB14->2
+PB13->3
+PB12->4
+
+74HC138
+PB7->A0
+PB8->A1
+PB9->A2
+
+不对劲 不应该是74HC138 应该是595...
+知道数码管是共阳极
+
+74HC595 上升沿有效
+DS(serial data input)->PB9	数据
+STCP storage clock->PB8	整体移出
+SHCP shift clock->PB7		移动一位
+
+
+
+
+
+
+
+

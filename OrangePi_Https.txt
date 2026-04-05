@@ -1,0 +1,18 @@
+	SakuraFrp的内网穿透太过复杂...
+我需要开一个文档来记录一下...配置网站的过程...
+	SakuraFrp禁止了用http穿透，只能给配置复杂的https
+OrangePi把Apache2配置成https...需要在
+/etc/apache2/sites-available/default-ssl.conf
+里面配置SSLCertificateFile和SSLCertificateKeyFile...
+	这两个文件可以在启动SakuraFrp后获得...	
+	在这个文件里面还可以改DocumentRoot配置网站启动位置
+启动Apache2:/etc/init.d/apache2 start
+
+
+
+
+
+
+
+
+		2024/11/26/20:01

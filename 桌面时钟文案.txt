@@ -1,0 +1,35 @@
+周/早中晚/文案
+1 M Electron.&￥Experiment
+1 N Rest~￥For While
+1 E Night-for￥NewWeek
+
+2 M I am so--￥Tired :(	
+2 N KindaCold￥Outside..?
+2 E Everything￥Goes On->
+
+3 M BAD,I mean￥My Life :(
+3 N EveryThing￥HardToDo
+3 E Take A--￥Break...
+
+4 M Sounds A''￥GoodMornin
+4 N AfterNoon>￥after...
+4 E Relax..and￥Restart.
+
+5 M F**king￥World !
+5 N AfterNoon^	￥forLearn>>
+5 E ^Night-￥-night! :)
+
+6 M Maybe..￥A nice day?
+6 N Saturday?￥Learning>>
+6 E Best Just￥->Tonight.
+
+7 M Have a^￥NiceSunday
+7 N KeepGoing!￥KeepTrying
+7 E WhatDone?￥->ThisWeek.
+
+
+
+
+
+
+
